@@ -248,22 +248,24 @@ app.get("/study", (c) => {
           document.getElementById("btn-wrong").disabled = true;
         } else {
           if (c.direction === "kw_to_syn") {
-            el.innerHTML = '<div class="card-box flash-in">' +
+            el.innerHTML = '<div class="card-box flash-in" onclick="flipCard()">' +
               '<span class="tag tag-mastered">Jawaban</span>' +
               '<div class="card-synonym">' + esc(c.synonym || '?') + '</div>' +
               '<div class="card-definition">' + esc(c.definition || '') + '</div>' +
               (c.example1 ? '<div class="card-example">"' + esc(c.example1) + '"</div>' : '') +
+              '<p style="margin-top:1rem; color:#aaa; font-size:0.8rem">Klik untuk balik</p>' +
               '</div>';
           } else {
-            el.innerHTML = '<div class="card-box flash-in">' +
+            el.innerHTML = '<div class="card-box flash-in" onclick="flipCard()">' +
               '<span class="tag tag-mastered">Jawaban</span>' +
               '<div class="card-word">' + esc(c.word) + '</div>' +
               '<div class="card-pos">' + esc(c.pos || '') + '</div>' +
               '<div class="card-definition">' + esc(c.definition || '') + '</div>' +
               (c.example1 ? '<div class="card-example">"' + esc(c.example1) + '"</div>' : '') +
+              '<p style="margin-top:1rem; color:#aaa; font-size:0.8rem">Klik untuk balik</p>' +
               '</div>';
           }
-          document.getElementById("instruction").textContent = "Apakah kamu bisa menjawab?";
+          document.getElementById("instruction").textContent = "Klik kartu untuk balik, atau pilih jawaban.";
           document.getElementById("btn-correct").disabled = false;
           document.getElementById("btn-wrong").disabled = false;
         }
@@ -272,8 +274,7 @@ app.get("/study", (c) => {
       function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
       function flipCard() {
-        if (isFlipped) return;
-        isFlipped = true;
+        isFlipped = !isFlipped;
         renderCard();
       }
 

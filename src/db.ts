@@ -218,15 +218,15 @@ export function updateProgress(cardId: number, direction: string, correct: boole
   const now = new Date().toISOString();
 
   if (correct) {
-    // SM-2 algorithm
+    // Adaptive repetition: intervals in minutes for fast in-session review
     const newReps = prog.repetitions + 1;
     let newInterval: number;
     let newEase = prog.ease_factor;
 
     if (newReps === 1) {
-      newInterval = 1;
+      newInterval = 5;        // 5 minutes
     } else if (newReps === 2) {
-      newInterval = 6;
+      newInterval = 30;       // 30 minutes
     } else {
       newInterval = Math.round(prog.interval * prog.ease_factor);
     }
@@ -234,12 +234,12 @@ export function updateProgress(cardId: number, direction: string, correct: boole
     // Update ease factor (quality 5 = perfect recall)
     newEase = Math.max(1.3, newEase + (0.1 - (5 - 5) * (0.08 + (5 - 5) * 0.02)));
 
-    // If interval >= 14 days, mark as mastered
-    const newPile = newInterval >= 14 ? "mastered" : "unmastered";
+    // Mark as mastered after 3+ consecutive correct answers
+    const newPile = newReps >= 3 ? "mastered" : "unmastered";
 
-    // Schedule next review
+    // Schedule next review (using minutes)
     const nextReview = new Date();
-    nextReview.setDate(nextReview.getDate() + newInterval);
+    nextReview.setMinutes(nextReview.getMinutes() + newInterval);
 
     getDb().run(
       `UPDATE study_progress 
