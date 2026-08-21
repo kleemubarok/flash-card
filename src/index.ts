@@ -6,6 +6,7 @@ import {
   getRandomCards, getRandomSynonymDistractors, getRandomWordDistractors,
   getDueCardsCount, getProgress,
   getQuizCards, getMCQOptions, getMCQWordOptions,
+  saveQuizSession, saveQuizDetail, getQuizSessions, getQuizSessionDetail, getQuizStats,
 } from "./db";
 
 const app = new Hono();
@@ -101,6 +102,7 @@ function nav(): string {
     <a href="/study">Belajar</a>
     <a href="/pile">Pile</a>
     <a href="/quiz">Quiz</a>
+    <a href="/history">History</a>
     <a href="/manage">Kelola</a>
   </div>
 </nav>`;
@@ -384,36 +386,54 @@ app.get("/quiz/matching", (c) => {
   const lessonStr = c.req.query("lesson");
   const lessonLabel = lessonStr ? "Lesson " + lessonStr : "Semua Lesson";
   const apiLesson = lessonStr ? "&lesson=" + lessonStr : "";
+  const lessonVal = lessonStr ? lessonStr : '';
   return c.html(head("Quiz: Matching") + nav() + `
     <h2>🎯 Matching</h2>
     <p style="color:#888">${lessonLabel} — Klik pasangan keyword dan sinonim yang cocok.</p>
     <div id="score-bar" style="display:flex; justify-content:space-between; margin-bottom:1rem">
-      <span>Benar: <strong id="correct-count">0</strong></span>
-      <span>Sisa: <strong id="remaining">0</strong></span>
+      <span>Benar: <strong id="correct-count">0</strong> / <strong id="total-count">0</strong></span>
+      <span id="match-timer" style="color:#888; font-size:0.85rem"></span>
     </div>
     <div id="match-grid" class="quiz-grid"></div>
     <div id="match-result" class="hidden" style="text-align:center; margin-top:1.5rem">
       <h3 id="match-msg"></h3>
-      <button onclick="startMatch()" style="padding:0.8rem 2rem; border:none; border-radius:8px; background:#3b82f6; color:white; font-size:1rem; cursor:pointer; font-weight:600">Main Lagi</button>
+      <p id="match-score"></p>
+      <a href="/quiz/matching${apiLesson}" style="display:inline-block; padding:0.8rem 2rem; border-radius:8px; background:#3b82f6; color:white; text-decoration:none; font-weight:600">Main Lagi</a>
+      <a href="/history" style="display:inline-block; padding:0.8rem 2rem; border-radius:8px; background:#f3f4f6; color:#333; text-decoration:none; font-weight:600; margin-left:0.5rem">Lihat History</a>
     </div>
 
     <script>
-      var matchWords = [], matchSynonyms = [];
+      var matchWords = [], matchSynonyms = [], matchCards = [];
       var selectedWord = null, selectedSyn = null;
       var correct = 0, total = 0;
+      var startTime = Date.now();
+      var quizDetails = [];
+      var attemptWords = {};
       var API = "/api/quiz/matching?count=6" + "${apiLesson}";
+
+      function updateTimer() {
+        var elapsed = Math.floor((Date.now() - startTime) / 1000);
+        var m = Math.floor(elapsed / 60), s = elapsed % 60;
+        document.getElementById("match-timer").textContent = m + ":" + (s < 10 ? '0' : '') + s;
+      }
+      setInterval(updateTimer, 1000);
 
       async function startMatch() {
         document.getElementById("match-result").classList.add("hidden");
         correct = 0;
         selectedWord = null;
         selectedSyn = null;
+        quizDetails = [];
+        attemptWords = {};
+        startTime = Date.now();
 
         var res = await fetch(API);
         var data = await res.json();
+        matchCards = data.cards;
         matchWords = data.cards.map(function(c) { return { id: c.id, text: c.word, pairId: c.id }; });
         matchSynonyms = data.cards.map(function(c) { return { id: c.id, text: c.synonym || c.definition || "?", pairId: c.id }; });
         total = data.cards.length;
+        document.getElementById("total-count").textContent = total;
         shuffle(matchWords);
         shuffle(matchSynonyms);
         renderMatch();
@@ -421,9 +441,7 @@ app.get("/quiz/matching", (c) => {
 
       function renderMatch() {
         var grid = document.getElementById("match-grid");
-        var remaining = total - correct;
         document.getElementById("correct-count").textContent = correct;
-        document.getElementById("remaining").textContent = remaining;
 
         var html = '<div style="grid-column:1/-1; text-align:center; font-weight:700; color:#888; font-size:0.85rem">KATA</div>';
         matchWords.forEach(function(w) {
@@ -456,20 +474,45 @@ app.get("/quiz/matching", (c) => {
 
       function checkMatch() {
         if (!selectedWord || !selectedSyn) return;
+        var card = matchCards.find(function(c) { return c.id == selectedWord.pairId; }) || {};
+        var userAnswer = selectedWord.text + " → " + selectedSyn.text;
+        var correctAnswer = card.word + " → " + (card.synonym || card.definition || "?");
+
         if (selectedWord.pairId === selectedSyn.pairId) {
           correct++;
+          quizDetails.push({ card_id: card.id, word: card.word, synonym: card.synonym || '', direction: 'kw_to_syn', user_answer: userAnswer, correct_answer: correctAnswer, is_correct: true });
           selectedWord.pairId = "matched";
           selectedSyn.pairId = "matched";
           if (correct === total) {
-            setTimeout(function() {
-              document.getElementById("match-result").classList.remove("hidden");
-              document.getElementById("match-msg").textContent = "🎉 Semua benar! " + correct + "/" + total;
-            }, 300);
+            setTimeout(saveMatchResults, 500);
           }
+        } else {
+          quizDetails.push({ card_id: card.id, word: card.word, synonym: card.synonym || '', direction: 'kw_to_syn', user_answer: userAnswer, correct_answer: correctAnswer, is_correct: false });
         }
         selectedWord = null;
         selectedSyn = null;
         renderMatch();
+      }
+
+      async function saveMatchResults() {
+        var duration = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById("match-result").classList.remove("hidden");
+        document.getElementById("match-msg").textContent = "🎉 Matching Selesai!";
+        document.getElementById("match-score").textContent = correct + "/" + total + " benar (" + Math.round(correct/total*100) + "%)");
+        try {
+          await fetch("/api/quiz/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "matching",
+              lesson: ${lessonVal} ? parseInt("${lessonVal}") : null,
+              total: total,
+              correct: correct,
+              duration: duration,
+              details: quizDetails
+            })
+          });
+        } catch(e) {}
       }
 
       function shuffle(arr) {
@@ -490,37 +533,56 @@ app.get("/quiz/mcq", (c) => {
   const lessonStr = c.req.query("lesson");
   const lessonLabel = lessonStr ? "Lesson " + lessonStr : "Semua Lesson";
   const apiLesson = lessonStr ? "?lesson=" + lessonStr : "";
+  const lessonVal = lessonStr ? lessonStr : '';
   return c.html(head("Quiz: Pilihan Ganda") + nav() + `
     <h2>📋 Pilihan Ganda</h2>
-    <p style="color:#888">${lessonLabel}</p>
+    <p style="color:#888">${lessonLabel} — 10 soal</p>
     <div id="score-bar" style="display:flex; justify-content:space-between; margin-bottom:1rem">
-      <span>Benar: <strong id="mcq-correct">0</strong></span>
-      <span>Total: <strong id="mcq-total">0</strong></span>
+      <span>Benar: <strong id="mcq-correct">0</strong> / <strong id="mcq-total">0</strong></span>
+      <span id="mcq-timer" style="color:#888; font-size:0.85rem"></span>
     </div>
     <div id="mcq-container"></div>
+    <div id="mcq-done" class="hidden" style="text-align:center; margin-top:1.5rem">
+      <h3 id="mcq-final-msg"></h3>
+      <p id="mcq-final-score"></p>
+      <a href="/quiz/mcq${apiLesson}" style="display:inline-block; padding:0.8rem 2rem; border-radius:8px; background:#3b82f6; color:white; text-decoration:none; font-weight:600">Ulangi</a>
+      <a href="/history" style="display:inline-block; padding:0.8rem 2rem; border-radius:8px; background:#f3f4f6; color:#333; text-decoration:none; font-weight:600; margin-left:0.5rem">Lihat History</a>
+    </div>
 
     <script>
-      var mcqCorrect = 0, mcqTotal = 0;
-      var API = "/api/quiz/mcq" + "${apiLesson}";
+      var mcqCorrect = 0, mcqTotal = 0, mcqMax = 10;
+      var startTime = Date.now();
+      var quizDetails = [];
+      var currentMCQData = null;
+      var currentShowWord = false;
+      var API = "/api/quiz/mcq${apiLesson}";
+
+      function updateTimer() {
+        var elapsed = Math.floor((Date.now() - startTime) / 1000);
+        var m = Math.floor(elapsed / 60), s = elapsed % 60;
+        document.getElementById("mcq-timer").textContent = m + ":" + (s < 10 ? '0' : '') + s;
+      }
+      setInterval(updateTimer, 1000);
 
       async function loadMCQ() {
+        if (mcqTotal >= mcqMax) { finishMCQ(); return; }
         var res = await fetch(API);
         var data = await res.json();
+        currentMCQData = data;
+        currentShowWord = Math.random() > 0.5;
         mcqTotal++;
         document.getElementById("mcq-total").textContent = mcqTotal;
 
         var container = document.getElementById("mcq-container");
-        var showWord = Math.random() > 0.5;
 
-        if (showWord) {
+        if (currentShowWord) {
           var opts = data.options || [data.card.synonym].concat(data.distractors || []);
           container.innerHTML = '<article>' +
             '<h3 style="text-align:center; margin:0">' + esc(data.card.word) + ' <small style="color:#888">' + (data.card.pos||'') + '</small></h3>' +
             '<p style="text-align:center; color:#888; font-size:0.85rem">Pilih sinonim yang benar:</p>' +
             '<div class="quiz-grid">' + opts.map(function(o) {
-              return '<div class="quiz-option" onclick="checkMCQ(this,\'' + jsEsc(o) + '\',\'' + jsEsc(data.correct||data.card.synonym||'') + '\')">' + o + '</div>';
+              return '<div class="quiz-option" onclick="checkMCQ(this,\'' + jsEsc(o) + '\',\'' + jsEsc(data.correct||data.card.synonym||'') + '\',\'' + jsEsc(data.card.word) + '\',\'' + jsEsc(data.card.synonym||'') + '\',\'' + 'kw_to_syn' + '\')">' + o + '</div>';
             }).join("") + '</div>' +
-            (data.card.definition ? '<p style="text-align:center; font-size:0.85rem; color:#888; margin-top:0.5rem">Arti: ' + data.card.definition + '</p>' : '') +
             '</article>';
         } else {
           var wOpts = data.wordOptions || [data.card.word].concat(data.distractorWords || []);
@@ -528,32 +590,63 @@ app.get("/quiz/mcq", (c) => {
             '<h3 style="text-align:center; color:#3b82f6; margin:0">' + (data.card.synonym || data.card.definition || '?') + '</h3>' +
             '<p style="text-align:center; color:#888; font-size:0.85rem">Kata yang memiliki sinonim di atas adalah:</p>' +
             '<div class="quiz-grid">' + wOpts.map(function(o) {
-              return '<div class="quiz-option" onclick="checkMCQ(this,\'' + jsEsc(o) + '\',\'' + jsEsc(data.correctWord||data.card.word) + '\')">' + o + '</div>';
+              return '<div class="quiz-option" onclick="checkMCQ(this,\'' + jsEsc(o) + '\',\'' + jsEsc(data.correctWord||data.card.word) + '\',\'' + jsEsc(data.card.word) + '\',\'' + jsEsc(data.card.synonym||'') + '\',\'' + 'syn_to_kw' + '\')">' + o + '</div>';
             }).join("") + '</div>' +
             '</article>';
         }
       }
 
-      function checkMCQ(el, chosen, correctAnswer) {
+      function checkMCQ(el, chosen, correctAnswer, word, synonym, direction) {
         var article = el.closest("article");
         if (article.querySelector(".correct, .wrong")) return;
         var options = el.closest(".quiz-grid").querySelectorAll(".quiz-option");
         options.forEach(function(o) {
           if (o.textContent.trim() === correctAnswer) o.classList.add("correct");
         });
-        if (chosen === correctAnswer) {
+        var isCorrect = chosen === correctAnswer;
+        if (isCorrect) {
           el.classList.add("correct");
           mcqCorrect++;
           document.getElementById("mcq-correct").textContent = mcqCorrect;
         } else {
           el.classList.add("wrong");
         }
+        quizDetails.push({
+          card_id: currentMCQData.card.id,
+          word: word,
+          synonym: synonym,
+          direction: direction,
+          user_answer: chosen,
+          correct_answer: correctAnswer,
+          is_correct: isCorrect
+        });
         setTimeout(loadMCQ, 1200);
+      }
+
+      async function finishMCQ() {
+        var duration = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById("mcq-container").innerHTML = '';
+        document.getElementById("mcq-done").classList.remove("hidden");
+        document.getElementById("mcq-final-msg").textContent = "🎉 Quiz Selesai!";
+        document.getElementById("mcq-final-score").textContent = mcqCorrect + "/" + mcqMax + " benar (" + Math.round(mcqCorrect/mcqMax*100) + "%)";
+        try {
+          await fetch("/api/quiz/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "mcq",
+              lesson: ${lessonVal} ? parseInt("${lessonVal}") : null,
+              total: mcqMax,
+              correct: mcqCorrect,
+              duration: duration,
+              details: quizDetails
+            })
+          });
+        } catch(e) {}
       }
 
       function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
       function jsEsc(s) { return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'"); }
-      function shuffleArr(a) { for (var i = a.length-1; i>0; i--) { var j=Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; } }
 
       loadMCQ();
     </script>
@@ -566,35 +659,55 @@ app.get("/quiz/typing", (c) => {
   const lessonStr = c.req.query("lesson");
   const lessonLabel = lessonStr ? "Lesson " + lessonStr : "Semua Lesson";
   const apiLesson = lessonStr ? "?lesson=" + lessonStr : "";
+  const lessonVal = lessonStr ? lessonStr : '';
   return c.html(head("Quiz: Typing") + nav() + `
     <h2>⌨️ Typing</h2>
-    <p style="color:#888">${lessonLabel}</p>
+    <p style="color:#888">${lessonLabel} — 10 soal</p>
     <div id="score-bar" style="display:flex; justify-content:space-between; margin-bottom:1rem">
-      <span>Benar: <strong id="type-correct">0</strong></span>
-      <span>Total: <strong id="type-total">0</strong></span>
+      <span>Benar: <strong id="type-correct">0</strong> / <strong id="type-total">0</strong></span>
+      <span id="type-timer" style="color:#888; font-size:0.85rem"></span>
     </div>
     <div id="type-container"></div>
+    <div id="type-done" class="hidden" style="text-align:center; margin-top:1.5rem">
+      <h3 id="type-final-msg"></h3>
+      <p id="type-final-score"></p>
+      <a href="/quiz/typing${apiLesson}" style="display:inline-block; padding:0.8rem 2rem; border-radius:8px; background:#3b82f6; color:white; text-decoration:none; font-weight:600">Ulangi</a>
+      <a href="/history" style="display:inline-block; padding:0.8rem 2rem; border-radius:8px; background:#f3f4f6; color:#333; text-decoration:none; font-weight:600; margin-left:0.5rem">Lihat History</a>
+    </div>
 
     <script>
-      var typeCorrect = 0, typeTotal = 0;
-      var API = "/api/quiz/typing" + "${apiLesson}";
+      var typeCorrect = 0, typeTotal = 0, typeMax = 10;
+      var startTime = Date.now();
+      var quizDetails = [];
+      var currentTypeData = null, currentTypeAnswer = '', currentTypeDirection = '';
+      var API = "/api/quiz/typing${apiLesson}";
+
+      function updateTimer() {
+        var elapsed = Math.floor((Date.now() - startTime) / 1000);
+        var m = Math.floor(elapsed / 60), s = elapsed % 60;
+        document.getElementById("type-timer").textContent = m + ":" + (s < 10 ? '0' : '') + s;
+      }
+      setInterval(updateTimer, 1000);
 
       async function loadTyping() {
+        if (typeTotal >= typeMax) { finishTyping(); return; }
         var res = await fetch(API);
         var data = await res.json();
+        currentTypeData = data;
         typeTotal++;
         document.getElementById("type-total").textContent = typeTotal;
 
         var isWordMode = Math.random() > 0.5;
         var prompt = isWordMode ? data.card.word : (data.card.synonym || data.card.definition || "?");
-        var answer = isWordMode ? (data.card.synonym || "") : data.card.word;
+        currentTypeAnswer = isWordMode ? (data.card.synonym || "") : data.card.word;
+        currentTypeDirection = isWordMode ? 'kw_to_syn' : 'syn_to_kw';
         var label = isWordMode ? "Ketik sinonim dari:" : "Ketik kata yang sinonimnya:";
 
         document.getElementById("type-container").innerHTML = '<article>' +
           '<p style="color:#888; margin:0">' + label + '</p>' +
-          '<h3 style="text-align:center; margin:0.5rem 0">' + prompt + '</h3>' +
-          (data.card.definition ? '<p style="text-align:center; font-size:0.85rem; color:#888; margin:0">Arti: ' + data.card.definition + '</p>' : '') +
-          '<form id="type-form" onsubmit="checkTyping(event, \'' + answer.toLowerCase().replace(/'/g, "\\'") + '\')" style="margin-top:1rem">' +
+          '<h3 style="text-align:center; margin:0.5rem 0">' + esc(prompt) + '</h3>' +
+          (data.card.definition ? '<p style="text-align:center; font-size:0.85rem; color:#888; margin:0">Arti: ' + esc(data.card.definition) + '</p>' : '') +
+          '<form id="type-form" onsubmit="checkTyping(event)" style="margin-top:1rem">' +
           '<input type="text" id="type-input" placeholder="Ketik jawaban..." autocomplete="off" autofocus style="font-size:1.1rem; padding:0.8rem">' +
           '<button type="submit" style="width:100%; padding:0.8rem; margin-top:0.5rem; border:none; border-radius:8px; background:#3b82f6; color:white; font-size:1rem; cursor:pointer; font-weight:600">Cek</button>' +
           '</form>' +
@@ -603,19 +716,53 @@ app.get("/quiz/typing", (c) => {
         document.getElementById("type-input").focus();
       }
 
-      function checkTyping(e, correct) {
+      function checkTyping(e) {
         e.preventDefault();
-        var input = document.getElementById("type-input").value.trim().toLowerCase();
+        var input = document.getElementById("type-input").value.trim();
         var feedback = document.getElementById("type-feedback");
-        if (input === correct) {
+        var isCorrect = input.toLowerCase() === currentTypeAnswer.toLowerCase();
+        quizDetails.push({
+          card_id: currentTypeData.card.id,
+          word: currentTypeData.card.word,
+          synonym: currentTypeData.card.synonym || '',
+          direction: currentTypeDirection,
+          user_answer: input,
+          correct_answer: currentTypeAnswer,
+          is_correct: isCorrect
+        });
+        if (isCorrect) {
           feedback.innerHTML = '<p style="color:#22c55e; font-weight:700; font-size:1.1rem">✅ Benar!</p>';
           typeCorrect++;
           document.getElementById("type-correct").textContent = typeCorrect;
         } else {
-          feedback.innerHTML = '<p style="color:#ef4444; font-weight:700">❌ Jawaban: <strong>' + correct + '</strong></p>';
+          feedback.innerHTML = '<p style="color:#ef4444; font-weight:700">❌ Jawaban: <strong>' + esc(currentTypeAnswer) + '</strong></p>';
         }
         setTimeout(loadTyping, 1500);
       }
+
+      async function finishTyping() {
+        var duration = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById("type-container").innerHTML = '';
+        document.getElementById("type-done").classList.remove("hidden");
+        document.getElementById("type-final-msg").textContent = "🎉 Typing Selesai!";
+        document.getElementById("type-final-score").textContent = typeCorrect + "/" + typeMax + " benar (" + Math.round(typeCorrect/typeMax*100) + "%)";
+        try {
+          await fetch("/api/quiz/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "typing",
+              lesson: ${lessonVal} ? parseInt("${lessonVal}") : null,
+              total: typeMax,
+              correct: typeCorrect,
+              duration: duration,
+              details: quizDetails
+            })
+          });
+        } catch(e) {}
+      }
+
+      function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
       loadTyping();
     </script>
@@ -718,6 +865,142 @@ app.get("/manage", (c) => {
   `);
 });
 
+// ── History ──
+app.get("/history", (c) => {
+  return c.html(head("Quiz History") + nav() + `
+    <h2>📊 Quiz History</h2>
+    <div id="quiz-stats" style="margin-bottom:1.5rem"><p style="color:#888">Loading stats...</p></div>
+    <div id="chart-container" style="margin-bottom:1.5rem">
+      <canvas id="scoreChart" height="200"></canvas>
+    </div>
+    <h3>Riwayat Sesi Quiz</h3>
+    <div id="history-list"><p style="color:#888">Loading...</p></div>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <script>
+      var chart = null;
+
+      async function loadHistory() {
+        var statsRes = await fetch("/api/stats/quiz");
+        var stats = await statsRes.json();
+        var histRes = await fetch("/api/history");
+        var sessions = await histRes.json();
+
+        // Stats cards
+        document.getElementById("quiz-stats").innerHTML =
+          '<div class="stats-grid">' +
+          '<div class="stat-card"><div class="stat-num">' + stats.totalSessions + '</div><div class="stat-label">Total Sesi</div></div>' +
+          '<div class="stat-card"><div class="stat-num" style="color:#3b82f6">' + stats.avgScore + '%</div><div class="stat-label">Rata-rata Skor</div></div>' +
+          '<div class="stat-card"><div class="stat-num" style="color:#22c55e">' + stats.bestScore + '%</div><div class="stat-label">Skor Tertinggi</div></div>' +
+          '<div class="stat-card"><div class="stat-num" style="color:#f59e0b">' + stats.activeDays + '</div><div class="stat-label">Hari Aktif (30d)</div></div>' +
+          '</div>' +
+          (stats.byMode.length > 0 ? '<div style="margin-top:0.5rem; font-size:0.85rem; color:#888">' + stats.byMode.map(function(m) {
+            return '<span style="margin-right:1rem"><strong>' + m.quiz_mode.toUpperCase() + '</strong>: ' + Math.round(m.avg_score) + '% (' + m.sessions + ' sesi)</span>';
+          }).join('') + '</div>' : '');
+
+        // ApexCharts line chart
+        if (stats.recentScores && stats.recentScores.length > 0) {
+          var series = stats.recentScores.map(function(s) { return s.score; });
+          var labels = stats.recentScores.map(function(s, i) { return '#' + (i+1); });
+          if (chart) chart.destroy();
+          chart = new ApexCharts(document.getElementById("scoreChart"), {
+            chart: { type: "line", height: 200, toolbar: { show: false } },
+            series: [{ name: "Skor", data: series }],
+            xaxis: { labels: { show: true, style: { fontSize: '10px' } } },
+            yaxis: { min: 0, max: 100, ticks: { stepSize: 25 } },
+            stroke: { curve: "smooth", width: 2 },
+            colors: ["#3b82f6"],
+            markers: { size: 4 },
+            title: { text: "Skor per Sesi (Recent)", style: { fontSize: '14px' } }
+          });
+          chart.render();
+        }
+
+        // Session list
+        var listEl = document.getElementById("history-list");
+        if (sessions.length === 0) {
+          listEl.innerHTML = '<p style="color:#888">Belum ada riwayat quiz.</p>';
+          return;
+        }
+        listEl.innerHTML = sessions.map(function(s) {
+          var date = new Date(s.created_at);
+          var dateStr = date.toLocaleDateString('id-ID') + ' ' + date.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'});
+          var modeIcon = s.quiz_mode === 'mcq' ? '📋' : s.quiz_mode === 'matching' ? '🎯' : '⌨️';
+          var scoreColor = s.score >= 80 ? '#22c55e' : s.score >= 50 ? '#f59e0b' : '#ef4444';
+          var dur = Math.floor(s.duration_seconds / 60) + 'm ' + (s.duration_seconds % 60) + 's';
+          return '<a href="/history/' + s.id + '" style="display:block; text-decoration:none; color:inherit; margin-bottom:0.5rem">' +
+            '<article style="display:flex; justify-content:space-between; align-items:center; cursor:pointer">' +
+            '<div>' +
+            '<strong>' + modeIcon + ' ' + s.quiz_mode.toUpperCase() + '</strong>' +
+            (s.lesson ? ' · Lesson ' + s.lesson : ' · Semua Lesson') +
+            '<br><small style="color:#888">' + dateStr + ' · ' + dur + '</small>' +
+            '</div>' +
+            '<div style="text-align:right">' +
+            '<div style="font-size:1.5rem; font-weight:700; color:' + scoreColor + '">' + s.score + '%</div>' +
+            '<small style="color:#888">' + s.correct_answers + '/' + s.total_questions + '</small>' +
+            '</div>' +
+            '</article></a>';
+        }).join("");
+      }
+
+      loadHistory();
+    </script>
+    ${FOOTER}
+  `);
+});
+
+app.get("/history/:id", (c) => {
+  const id = parseInt(c.req.param("id"));
+  return c.html(head("Quiz Detail") + nav() + `
+    <h2>📝 Detail Sesi Quiz</h2>
+    <div id="session-info"><p style="color:#888">Loading...</p></div>
+    <div id="detail-list"></div>
+    <script>
+      async function loadDetail() {
+        var res = await fetch("/api/history/${id}");
+        if (!res.ok) { document.getElementById("session-info").innerHTML = '<p style="color:#ef4444">Sesi tidak ditemukan</p>'; return; }
+        var data = await res.json();
+        var s = data.session;
+        var date = new Date(s.created_at);
+        var dateStr = date.toLocaleDateString('id-ID') + ' ' + date.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'});
+        var dur = Math.floor(s.duration_seconds / 60) + 'm ' + (s.duration_seconds % 60) + 's';
+        var scoreColor = s.score >= 80 ? '#22c55e' : s.score >= 50 ? '#f59e0b' : '#ef4444';
+
+        document.getElementById("session-info").innerHTML =
+          '<div class="stats-grid">' +
+          '<div class="stat-card"><div class="stat-num" style="color:' + scoreColor + '">' + s.score + '%</div><div class="stat-label">Skor</div></div>' +
+          '<div class="stat-card"><div class="stat-num">' + s.correct_answers + '/' + s.total_questions + '</div><div class="stat-label">Benar</div></div>' +
+          '</div>' +
+          '<p style="font-size:0.85rem; color:#888">' +
+          'Mode: <strong>' + s.quiz_mode.toUpperCase() + '</strong> · ' +
+          (s.lesson ? 'Lesson ' + s.lesson : 'Semua Lesson') +
+          ' · ' + dateStr + ' · ' + dur +
+          '</p>';
+
+        var details = data.details;
+        document.getElementById("detail-list").innerHTML = details.map(function(d, i) {
+          var icon = d.is_correct ? '✅' : '❌';
+          var bgColor = d.is_correct ? '#f0fdf4' : '#fef2f2';
+          var borderColor = d.is_correct ? '#22c55e' : '#ef4444';
+          return '<article style="border-left:4px solid ' + borderColor + '; background:' + bgColor + '; margin-bottom:0.5rem">' +
+            '<div style="display:flex; justify-content:space-between; align-items:start">' +
+            '<div>' +
+            '<strong>' + icon + ' ' + (i+1) + '. ' + esc(d.word) + '</strong>' +
+            '<br><small style="color:#888">Sinonim: ' + esc(d.synonym || '-') + '</small>' +
+            '<br><small>Jawaban kamu: <strong>' + esc(d.user_answer) + '</strong></small>' +
+            (d.is_correct ? '' : '<br><small style="color:#22c55e">Jawaban benar: <strong>' + esc(d.correct_answer) + '</strong></small>') +
+            '</div>' +
+            '<span style="font-size:0.75rem; color:#888">' + d.direction.replace('_', '→') + '</span>' +
+            '</div>' +
+            '</article>';
+        }).join("");
+      }
+      function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+      loadDetail();
+    </script>
+    ${FOOTER}
+  `);
+});
+
 // ════════════════════════════════════════
 //  API ROUTES
 // ════════════════════════════════════════
@@ -801,6 +1084,33 @@ app.get("/api/quiz/typing", (c) => {
   if (cards.length === 0) return c.json({ error: "No cards" }, 404);
   return c.json({ card: cards[0] });
 });
+
+// ── Quiz History API ──
+app.post("/api/quiz/save", async (c) => {
+  const body = await c.req.json();
+  const { mode, lesson, total, correct, duration, details } = body;
+  const sessionId = saveQuizSession(mode, lesson || null, total, correct, duration || 0);
+  if (details && Array.isArray(details)) {
+    for (const d of details) {
+      saveQuizDetail(sessionId, d.card_id, d.word, d.synonym || '', d.direction || 'kw_to_syn', d.user_answer, d.correct_answer, d.is_correct);
+    }
+  }
+  return c.json({ sessionId }, 201);
+});
+
+app.get("/api/history", (c) => {
+  const limit = parseInt(c.req.query("limit") || "50");
+  return c.json(getQuizSessions(limit));
+});
+
+app.get("/api/history/:id", (c) => {
+  const id = parseInt(c.req.param("id"));
+  const data = getQuizSessionDetail(id);
+  if (!data) return c.json({ error: "Not found" }, 404);
+  return c.json(data);
+});
+
+app.get("/api/stats/quiz", (c) => c.json(getQuizStats()));
 
 // ── Start ──
 const port = 3000;

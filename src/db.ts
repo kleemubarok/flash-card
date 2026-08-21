@@ -383,3 +383,140 @@ function shuffleArray(arr: unknown[]): void {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }
+
+// ── Quiz History ──
+export interface QuizSession {
+  id: number;
+  quiz_mode: string;
+  lesson: number | null;
+  total_questions: number;
+  correct_answers: number;
+  score: number;
+  duration_seconds: number;
+  created_at: string;
+}
+
+export interface QuizDetail {
+  id: number;
+  session_id: number;
+  card_id: number;
+  word: string;
+  synonym: string | null;
+  direction: string;
+  user_answer: string;
+  correct_answer: string;
+  is_correct: number;
+  created_at: string;
+}
+
+export function saveQuizSession(
+  mode: string,
+  lesson: number | null,
+  total: number,
+  correct: number,
+  duration: number
+): number {
+  const score = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const now = new Date().toISOString();
+  const info = getDb().prepare(
+    "INSERT INTO quiz_sessions (quiz_mode, lesson, total_questions, correct_answers, score, duration_seconds, created_at) VALUES (?,?,?,?,?,?,?)"
+  ).run(mode, lesson, total, correct, score, duration, now);
+  return info.lastInsertRowid as number;
+}
+
+export function saveQuizDetail(
+  sessionId: number,
+  cardId: number,
+  word: string,
+  synonym: string,
+  direction: string,
+  userAnswer: string,
+  correctAnswer: string,
+  isCorrect: boolean
+): void {
+  const now = new Date().toISOString();
+  getDb().prepare(
+    "INSERT INTO quiz_details (session_id, card_id, word, synonym, direction, user_answer, correct_answer, is_correct, created_at) VALUES (?,?,?,?,?,?,?,?,?)"
+  ).run(sessionId, cardId, word, synonym, direction, userAnswer, correctAnswer, isCorrect ? 1 : 0, now);
+}
+
+export function getQuizSessions(limit = 50): QuizSession[] {
+  return getDb().query(
+    "SELECT * FROM quiz_sessions ORDER BY created_at DESC LIMIT ?"
+  ).all(limit) as QuizSession[];
+}
+
+export function getQuizSessionDetail(sessionId: number): {
+  session: QuizSession;
+  details: QuizDetail[];
+} | null {
+  const session = getDb().query(
+    "SELECT * FROM quiz_sessions WHERE id = ?"
+  ).get(sessionId) as QuizSession | undefined;
+  if (!session) return null;
+  const details = getDb().query(
+    "SELECT * FROM quiz_details WHERE session_id = ? ORDER BY id"
+  ).all(sessionId) as QuizDetail[];
+  return { session, details };
+}
+
+export function getQuizStats() {
+  const totalSessions = getDb().query(
+    "SELECT COUNT(*) as cnt FROM quiz_sessions"
+  ).get() as { cnt: number };
+  const avgScore = getDb().query(
+    "SELECT COALESCE(AVG(score), 0) as avg_score FROM quiz_sessions"
+  ).get() as { avg_score: number };
+  const bestScore = getDb().query(
+    "SELECT COALESCE(MAX(score), 0) as best_score FROM quiz_sessions"
+  ).get() as { best_score: number };
+  const totalQuestions = getDb().query(
+    "SELECT COALESCE(SUM(total_questions), 0) as total FROM quiz_sessions"
+  ).get() as { total: number };
+  const totalCorrect = getDb().query(
+    "SELECT COALESCE(SUM(correct_answers), 0) as total FROM quiz_sessions"
+  ).get() as { total: number };
+  const byMode = getDb().query(
+    `SELECT quiz_mode, COUNT(*) as sessions, COALESCE(AVG(score),0) as avg_score
+     FROM quiz_sessions GROUP BY quiz_mode`
+  ).all() as Array<{ quiz_mode: string; sessions: number; avg_score: number }>;
+  const byLesson = getDb().query(
+    `SELECT lesson, COUNT(*) as sessions, COALESCE(AVG(score),0) as avg_score
+     FROM quiz_sessions WHERE lesson IS NOT NULL GROUP BY lesson ORDER BY lesson`
+  ).all() as Array<{ lesson: number; sessions: number; avg_score: number }>;
+  const recentScores = getDb().query(
+    `SELECT created_at, score, quiz_mode FROM quiz_sessions ORDER BY created_at DESC LIMIT 20`
+  ).all() as Array<{ created_at: string; score: number; quiz_mode: string }>;
+  const streak = getDb().query(
+    `SELECT COUNT(DISTINCT date(created_at)) as days FROM quiz_sessions
+     WHERE created_at >= date('now', '-30 days')`
+  ).get() as { days: number };
+
+  return {
+    totalSessions: totalSessions.cnt,
+    avgScore: Math.round(avgScore.avg_score),
+    bestScore: bestScore.best_score,
+    totalQuestions: totalQuestions.total,
+    totalCorrect: totalCorrect.total,
+    byMode,
+    byLesson,
+    recentScores: recentScores.reverse(),
+    activeDays: streak.days,
+  };
+}
+
+export function getLessonWeakCards(lesson: number, limit = 10): Array<{ word: string; correct_rate: number; attempts: number }> {
+  const rows = getDb().query(
+    `SELECT qd.word, 
+            COUNT(*) as attempts,
+            ROUND(100.0 * SUM(qd.is_correct) / COUNT(*), 1) as correct_rate
+     FROM quiz_details qd
+     JOIN quiz_sessions qs ON qs.id = qd.session_id
+     WHERE qs.lesson = ?
+     GROUP BY qd.word
+     HAVING attempts >= 2
+     ORDER BY correct_rate ASC, attempts DESC
+     LIMIT ?`
+  ).all(lesson, limit) as Array<{ word: string; attempts: number; correct_rate: number }>;
+  return rows;
+}
