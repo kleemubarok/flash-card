@@ -7,6 +7,7 @@ import {
   getDueCardsCount, getProgress,
   getQuizCards, getMCQOptions, getMCQWordOptions,
   saveQuizSession, saveQuizDetail, getQuizSessions, getQuizSessionDetail, getQuizStats,
+  getGlobalWeakCards, getWeakByLesson, getLessonWeakCards,
 } from "./db";
 
 const app = new Hono();
@@ -873,6 +874,10 @@ app.get("/history", (c) => {
     <div id="chart-container" style="margin-bottom:1.5rem">
       <canvas id="scoreChart" height="200"></canvas>
     </div>
+    <h3>🔍 Kata Lemah (Perlu Diperhatikan)</h3>
+    <div id="weak-cards" style="margin-bottom:1.5rem"><p style="color:#888">Loading...</p></div>
+    <h3>📊 Analisis per Lesson</h3>
+    <div id="weak-by-lesson" style="margin-bottom:1.5rem"><p style="color:#888">Loading...</p></div>
     <h3>Riwayat Sesi Quiz</h3>
     <div id="history-list"><p style="color:#888">Loading...</p></div>
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
@@ -884,6 +889,10 @@ app.get("/history", (c) => {
         var stats = await statsRes.json();
         var histRes = await fetch("/api/history");
         var sessions = await histRes.json();
+        var weakRes = await fetch("/api/weak-cards");
+        var weakCards = await weakRes.json();
+        var weakLessonRes = await fetch("/api/weak-by-lesson");
+        var weakByLesson = await weakLessonRes.json();
 
         // Stats cards
         document.getElementById("quiz-stats").innerHTML =
@@ -940,6 +949,59 @@ app.get("/history", (c) => {
             '</div>' +
             '</article></a>';
         }).join("");
+
+        // Weak cards
+        var weakEl = document.getElementById("weak-cards");
+        if (weakCards.length === 0) {
+          weakEl.innerHTML = '<p style="color:#888">Belum ada data kata lemah. Minimal 2 quiz attempt per kata.</p>';
+        } else {
+          var barColors = ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e'];
+          weakEl.innerHTML = '<div style="display:grid; gap:0.5rem">' + weakCards.map(function(w, i) {
+            var rate = w.correct_rate;
+            var rateColor = rate < 30 ? '#ef4444' : rate < 50 ? '#f97316' : rate < 70 ? '#f59e0b' : '#22c55e';
+            return '<article style="display:flex; align-items:center; gap:0.8rem; padding:0.6rem 0.8rem">' +
+              '<div style="flex:1; min-width:0">' +
+              '<div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.3rem">' +
+              '<strong style="font-size:1rem">' + esc(w.word) + '</strong>' +
+              '<span style="font-size:0.8rem; color:#888">' + (w.synonym ? esc(w.synonym) : '') + '</span>' +
+              '</div>' +
+              '<div style="display:flex; align-items:center; gap:0.5rem">' +
+              '<div class="progress-bar" style="flex:1; height:6px">' +
+              '<div class="progress-fill" style="width:' + rate + '%; background:' + rateColor + '"></div>' +
+              '</div>' +
+              '<span style="font-size:0.8rem; font-weight:700; color:' + rateColor + '; white-space:nowrap">' + rate + '%</span>' +
+              '</div>' +
+              '<small style="color:#888; font-size:0.75rem">' + w.attempts + 'x quiz' + (w.lesson ? ' · L' + w.lesson : '') + '</small>' +
+              '</div>' +
+              '</article>';
+          }).join('') + '</div>';
+        }
+
+        // Weak by lesson
+        var weakLessonEl = document.getElementById("weak-by-lesson");
+        if (weakByLesson.length === 0) {
+          weakLessonEl.innerHTML = '<p style="color:#888">Belum ada data per lesson.</p>';
+        } else {
+          weakLessonEl.innerHTML = '<div class="stats-grid" style="grid-template-columns:1fr">' + weakByLesson.map(function(l) {
+            var rateColor = l.avg_correct_rate < 50 ? '#ef4444' : l.avg_correct_rate < 70 ? '#f59e0b' : '#22c55e';
+            var weakPct = l.total_words > 0 ? Math.round((l.weak_words / l.total_words) * 100) : 0;
+            return '<article style="padding:0.8rem">' +
+              '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem">' +
+              '<strong>Lesson ' + l.lesson + '</strong>' +
+              '<span style="font-size:1.2rem; font-weight:700; color:' + rateColor + '">' + l.avg_correct_rate + '%</span>' +
+              '</div>' +
+              '<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.3rem">' +
+              '<div class="progress-bar" style="flex:1; height:6px">' +
+              '<div class="progress-fill" style="width:' + l.avg_correct_rate + '%; background:' + rateColor + '"></div>' +
+              '</div>' +
+              '</div>' +
+              '<div style="display:flex; justify-content:space-between; font-size:0.8rem; color:#888">' +
+              '<span>' + l.total_words + ' kata diuji</span>' +
+              '<span>' + l.weak_words + ' kata lemah (' + weakPct + '%)</span>' +
+              '</div>' +
+              '</article>';
+          }).join('') + '</div>';
+        }
       }
 
       loadHistory();
@@ -1065,7 +1127,7 @@ app.get("/api/quiz/mcq", (c) => {
   const lesson = lessonStr ? parseInt(lessonStr) : undefined;
   const cards = getQuizCards(lesson, 1);
   if (cards.length === 0) return c.json({ error: "No cards" }, 404);
-  const card = cards[0];
+  const card = cards[0]!;
   const mcqData = getMCQOptions(card, lesson);
   const wordData = getMCQWordOptions(card, lesson);
   return c.json({
@@ -1111,6 +1173,22 @@ app.get("/api/history/:id", (c) => {
 });
 
 app.get("/api/stats/quiz", (c) => c.json(getQuizStats()));
+
+// ── Weak Cards API ──
+app.get("/api/weak-cards", (c) => {
+  const limit = parseInt(c.req.query("limit") || "20");
+  return c.json(getGlobalWeakCards(limit));
+});
+
+app.get("/api/weak-by-lesson", (c) => {
+  return c.json(getWeakByLesson());
+});
+
+app.get("/api/weak-cards/:lesson", (c) => {
+  const lesson = parseInt(c.req.param("lesson"));
+  const limit = parseInt(c.req.query("limit") || "10");
+  return c.json(getLessonWeakCards(lesson, limit));
+});
 
 // ── Start ──
 const port = 3000;

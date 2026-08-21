@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - db-data:/app/data
+    environment:
+      - DB_PATH=/app/data/flashcards.db
+    restart: unless-stopped
+
+volumes:
+  db-data:

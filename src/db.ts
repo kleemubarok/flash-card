@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import path from "path";
 
-// Use absolute path to ensure it works with --watch
-const DB_PATH = path.resolve(import.meta.dir, "..", "flashcards.db");
+// Use DB_PATH env var if set (Docker), otherwise use default path
+const DB_PATH = process.env.DB_PATH || path.resolve(import.meta.dir, "..", "flashcards.db");
 
 let _db: Database | null = null;
 
@@ -78,7 +78,7 @@ export function createCard(data: Omit<Card, "id">): number {
 
 export function updateCard(id: number, data: Partial<Omit<Card, "id">>): void {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | number | null)[] = [];
   for (const [key, val] of Object.entries(data)) {
     fields.push(`${key} = ?`);
     values.push(val);
@@ -104,7 +104,7 @@ export function getCardsForReview(direction?: "kw_to_syn" | "syn_to_kw", limit =
     JOIN study_progress sp ON sp.card_id = c.id
     WHERE sp.pile = 'unmastered' AND (sp.next_review IS NULL OR sp.next_review <= ?)
   `;
-  const params: unknown[] = [now];
+  const params: (string | number)[] = [now];
   if (direction) {
     sql += " AND sp.direction = ?";
     params.push(direction);
@@ -205,7 +205,7 @@ export function getPileCards(pile: "mastered" | "unmastered"): Array<Card & Stud
 // ── Quiz Helpers ──
 export function getRandomCards(n: number, excludeId?: number): Card[] {
   let sql = "SELECT * FROM cards";
-  const params: unknown[] = [];
+  const params: (string | number)[] = [];
   if (excludeId) {
     sql += " WHERE id != ?";
     params.push(excludeId);
@@ -336,8 +336,8 @@ export function getMCQOptions(
   // Fill up to 3 if needed
   while (distractors.length < 3) {
     const extra = getRandomSynonymDistractors(correct, 1);
-    if (extra.length > 0 && !distractors.includes(extra[0])) {
-      distractors.push(extra[0]);
+    if (extra.length > 0 && !distractors.includes(extra[0]!)) {
+      distractors.push(extra[0]!);
     } else break;
   }
 
@@ -367,8 +367,8 @@ export function getMCQWordOptions(
 
   while (distractors.length < 3) {
     const extra = getRandomWordDistractors(card.word, 1);
-    if (extra.length > 0 && !distractors.includes(extra[0])) {
-      distractors.push(extra[0]);
+    if (extra.length > 0 && !distractors.includes(extra[0]!)) {
+      distractors.push(extra[0]!);
     } else break;
   }
 
@@ -518,5 +518,41 @@ export function getLessonWeakCards(lesson: number, limit = 10): Array<{ word: st
      ORDER BY correct_rate ASC, attempts DESC
      LIMIT ?`
   ).all(lesson, limit) as Array<{ word: string; attempts: number; correct_rate: number }>;
+  return rows;
+}
+
+export function getGlobalWeakCards(limit = 20): Array<{ word: string; synonym: string; lesson: number; correct_rate: number; attempts: number }> {
+  const rows = getDb().query(
+    `SELECT qd.word, qd.synonym, qs.lesson,
+            COUNT(*) as attempts,
+            ROUND(100.0 * SUM(qd.is_correct) / COUNT(*), 1) as correct_rate
+     FROM quiz_details qd
+     JOIN quiz_sessions qs ON qs.id = qd.session_id
+     GROUP BY qd.word
+     HAVING attempts >= 2
+     ORDER BY correct_rate ASC, attempts DESC
+     LIMIT ?`
+  ).all(limit) as Array<{ word: string; synonym: string; lesson: number; attempts: number; correct_rate: number }>;
+  return rows;
+}
+
+export function getWeakByLesson(limit = 50): Array<{ lesson: number; total_words: number; weak_words: number; avg_correct_rate: number }> {
+  const rows = getDb().query(
+    `SELECT qs.lesson,
+            COUNT(DISTINCT qd.word) as total_words,
+            SUM(CASE WHEN sub.correct_rate < 70 THEN 1 ELSE 0 END) as weak_words,
+            ROUND(AVG(sub.correct_rate), 1) as avg_correct_rate
+     FROM quiz_details qd
+     JOIN quiz_sessions qs ON qs.id = qd.session_id
+     JOIN (
+       SELECT word, ROUND(100.0 * SUM(is_correct) / COUNT(*), 1) as correct_rate
+       FROM quiz_details
+       GROUP BY word
+     ) sub ON sub.word = qd.word
+     WHERE qs.lesson IS NOT NULL
+     GROUP BY qs.lesson
+     ORDER BY avg_correct_rate ASC
+     LIMIT ?`
+  ).all(limit) as Array<{ lesson: number; total_words: number; weak_words: number; avg_correct_rate: number }>;
   return rows;
 }
