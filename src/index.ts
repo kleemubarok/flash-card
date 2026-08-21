@@ -8,6 +8,7 @@ import {
   getQuizCards, getMCQOptions, getMCQWordOptions,
   saveQuizSession, saveQuizDetail, getQuizSessions, getQuizSessionDetail, getQuizStats,
   getGlobalWeakCards, getWeakByLesson, getLessonWeakCards,
+  syncStudyProgress,
 } from "./db";
 
 const app = new Hono();
@@ -326,24 +327,47 @@ app.get("/pile", (c) => {
       <div id="unmastered-list"><p style="color:#888">Loading...</p></div>
     </details>
 
+    <style>
+      .flip-card { cursor: pointer; user-select: none; transition: all 0.2s; }
+      .flip-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+      .flip-card .word-side, .flip-card .syn-side { transition: opacity 0.15s; }
+      .flip-card.flipped .word-side { opacity: 0.3; }
+      .flip-card.flipped .syn-side { opacity: 1; }
+      .flip-card .syn-side { opacity: 0; }
+      .flip-card.flipped .syn-side { position: relative; }
+    </style>
     <script>
+      function flipCard(el) {
+        el.classList.toggle("flipped");
+      }
+
+      function renderPileCards(cards, elId, pileClass) {
+        if (cards.length === 0) {
+          document.getElementById(elId).innerHTML = pileClass === 'pile-mastered'
+            ? '<p style="color:#888">Belum ada</p>'
+            : '<p style="color:#888">Semua sudah dikuasai! 🎉</p>';
+          return;
+        }
+        document.getElementById(elId).innerHTML = cards.map(function(c) {
+          return '<div class="flip-card ' + pileClass + '" onclick="flipCard(this)" style="display:flex; justify-content:space-between; align-items:center; padding:0.6rem 0.8rem; margin-bottom:0.4rem; border-radius:8px; border:1px solid #eee; background:white">' +
+            '<div style="flex:1">' +
+            '<div class="word-side"><strong>' + esc(c.word) + '</strong> <small style="color:#888">' + (c.pos||'') + '</small></div>' +
+            '<div class="syn-side"><span style="color:#3b82f6; font-weight:600">→ ' + esc(c.synonym||'-') + '</span></div>' +
+            '</div>' +
+            '<small style="color:#aaa; white-space:nowrap; margin-left:0.5rem">L' + c.lesson + '</small>' +
+            '</div>';
+        }).join("");
+      }
+
+      function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
       async function loadPiles() {
         var mRes = await fetch("/api/pile/mastered");
         var uRes = await fetch("/api/pile/unmastered");
         var mastered = await mRes.json();
         var unmastered = await uRes.json();
-
-        document.getElementById("mastered-list").innerHTML = mastered.length === 0
-          ? '<p style="color:#888">Belum ada</p>'
-          : mastered.map(function(c) {
-              return '<div class="pile-mastered"><strong>' + c.word + '</strong> <small>' + (c.pos||'') + '</small> → <em>' + (c.synonym||'-') + '</em> <small style="color:#aaa">Lesson ' + c.lesson + '</small></div>';
-            }).join("");
-
-        document.getElementById("unmastered-list").innerHTML = unmastered.length === 0
-          ? '<p style="color:#888">Semua sudah dikuasai! 🎉</p>'
-          : unmastered.map(function(c) {
-              return '<div class="pile-unmastered"><strong>' + c.word + '</strong> <small>' + (c.pos||'') + '</small> → <em>' + (c.synonym||'-') + '</em> <small style="color:#aaa">Lesson ' + c.lesson + '</small></div>';
-            }).join("");
+        renderPileCards(mastered, "mastered-list", "pile-mastered");
+        renderPileCards(unmastered, "unmastered-list", "pile-unmastered");
       }
       loadPiles();
     </script>
@@ -1189,6 +1213,9 @@ app.get("/api/weak-cards/:lesson", (c) => {
   const limit = parseInt(c.req.query("limit") || "10");
   return c.json(getLessonWeakCards(lesson, limit));
 });
+
+// ── Sync study progress for any new cards ──
+syncStudyProgress();
 
 // ── Start ──
 const port = 3000;

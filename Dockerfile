@@ -10,8 +10,9 @@ COPY tsconfig.json ./
 COPY src/ src/
 COPY seed.py ./
 
-# Create data directory for SQLite persistence
+# Create data directory and copy seed database
 RUN mkdir -p /app/data
+COPY flashcards.db /app/data/flashcards.db
 
 EXPOSE 3000
 

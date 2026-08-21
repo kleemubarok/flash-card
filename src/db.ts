@@ -11,8 +11,76 @@ export function getDb(): Database {
     _db = new Database(DB_PATH);
     _db.run("PRAGMA journal_mode = WAL");
     _db.run("PRAGMA foreign_keys = ON");
+    initSchema(_db);
   }
   return _db;
+}
+
+function initSchema(db: Database) {
+  db.run(`CREATE TABLE IF NOT EXISTS cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lesson INTEGER NOT NULL,
+    word TEXT NOT NULL,
+    pos TEXT,
+    synonym TEXT,
+    definition TEXT,
+    example1 TEXT,
+    example2 TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS study_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('kw_to_syn', 'syn_to_kw')),
+    pile TEXT NOT NULL DEFAULT 'unmastered' CHECK(pile IN ('mastered', 'unmastered')),
+    interval INTEGER DEFAULT 1,
+    ease_factor REAL DEFAULT 2.5,
+    repetitions INTEGER DEFAULT 0,
+    next_review TEXT,
+    last_reviewed TEXT,
+    FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE,
+    UNIQUE(card_id, direction)
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS quiz_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quiz_mode TEXT NOT NULL,
+    lesson INTEGER,
+    total_questions INTEGER DEFAULT 0,
+    correct_answers INTEGER DEFAULT 0,
+    score INTEGER DEFAULT 0,
+    duration_seconds INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS quiz_details (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    card_id INTEGER NOT NULL,
+    word TEXT NOT NULL,
+    synonym TEXT,
+    direction TEXT NOT NULL,
+    user_answer TEXT NOT NULL,
+    correct_answer TEXT NOT NULL,
+    is_correct INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cards_lesson ON cards(lesson)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_progress_pile ON study_progress(pile)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_progress_review ON study_progress(next_review)`);
+}
+
+/** Ensure every card has study_progress rows for both directions. */
+export function syncStudyProgress() {
+  const db = getDb();
+  const cards = db.query("SELECT id FROM cards").all() as { id: number }[];
+  const stmt = db.prepare(
+    "INSERT OR IGNORE INTO study_progress (card_id, direction) VALUES (?, ?)"
+  );
+  for (const card of cards) {
+    stmt.run(card.id, 'kw_to_syn');
+    stmt.run(card.id, 'syn_to_kw');
+  }
 }
 
 // ── Card Types ──
