@@ -188,37 +188,7 @@ function loadNextStudyCard() {
   const mode = p.get('mode') || 'mixed';
   const direction = mode !== 'mixed' ? mode : undefined;
 
-  // Try to keep showing the SAME card until mastered in both directions
-  if (_study.card) {
-    const curId = _study.card.id;
-    const progress = Store.getAllProgress();
-    const p1 = progress[`${curId}_kw_to_syn`];
-    const p2 = progress[`${curId}_syn_to_kw`];
-    const isMastered = (p1 && p1.pile === 'mastered') || (p2 && p2.pile === 'mastered');
-
-    if (!isMastered) {
-      // Card not yet mastered — keep showing same card, switch direction if needed
-      const dir = direction || (_study.card.direction === 'kw_to_syn' ? 'syn_to_kw' : 'kw_to_syn');
-      // If current direction is already mastered, switch to the other
-      const curDirMastered = _study.card.direction === 'kw_to_syn'
-        ? (p1 && p1.pile === 'mastered')
-        : (p2 && p2.pile === 'mastered');
-      const finalDir = curDirMastered
-        ? (_study.card.direction === 'kw_to_syn' ? 'syn_to_kw' : 'kw_to_syn')
-        : dir;
-      _study.card = { ...ALL.find(c => c.id === curId), direction: finalDir };
-      _study.flipped = false;
-      document.getElementById('card-actions').classList.remove('hidden');
-      document.getElementById('btn-correct').disabled = true;
-      document.getElementById('btn-wrong').disabled = true;
-      renderStudyCard();
-      return;
-    }
-    // Card mastered in both directions — fall through to pick new card
-  }
-
   const cards = Store.getDueCards(ALL, direction, lesson, 1);
-  console.log('[app] loadNextStudyCard: lesson=', lesson, 'mode=', mode, 'direction=', direction, 'found=', cards.length);
   if (cards.length === 0) {
     document.getElementById('card-container').innerHTML = '<p style="text-align:center; font-size:1.2rem; padding:2rem">🎉 Semua kartu sudah direview! Coba lagi nanti.</p>';
     document.getElementById('card-actions').classList.add('hidden');
