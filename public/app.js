@@ -189,6 +189,7 @@ function loadNextStudyCard() {
   const direction = mode !== 'mixed' ? mode : undefined;
 
   const cards = Store.getDueCards(ALL, direction, lesson, 1);
+  console.log('[app] loadNextStudyCard: lesson=', lesson, 'mode=', mode, 'direction=', direction, 'found=', cards.length);
   if (cards.length === 0) {
     document.getElementById('card-container').innerHTML = '<p style="text-align:center; font-size:1.2rem; padding:2rem">🎉 Semua kartu sudah direview! Coba lagi nanti.</p>';
     document.getElementById('card-actions').classList.add('hidden');
@@ -197,6 +198,7 @@ function loadNextStudyCard() {
 
   const card = cards[0];
   const dir = direction || (Math.random() > 0.5 ? 'kw_to_syn' : 'syn_to_kw');
+  console.log('[app] loadCard:', card.word, card.id, 'dir=', dir);
   _study.card = { ...card, direction: dir };
   _study.flipped = false;
   document.getElementById('card-actions').classList.remove('hidden');
@@ -253,15 +255,18 @@ function renderStudyCard() {
 
 function answerStudy(correct) {
   if (!_study.card) return;
+  console.log('[app] answerStudy:', _study.card.word, _study.card.direction, 'correct=', correct);
   Store.updateProgress(_study.card.id, _study.card.direction, correct);
   loadNextStudyCard();
 }
 
 // ── Pile ──
 function pagePile() {
+  console.log('[app] pagePile called');
   const stats = Store.getPileStats(ALL);
   const mastered = Store.getPileCards(ALL, 'mastered');
   const unmastered = Store.getPileCards(ALL, 'unmastered');
+  console.log('[app] pile result: mastered=', mastered.length, 'unmastered=', unmastered.length);
 
   render(nav() + `<h2>Kelola Pile</h2>
     <div class="stats-grid">

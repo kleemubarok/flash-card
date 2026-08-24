@@ -17,7 +17,11 @@ function _write(key, val) {
 // ══════════════════════════════════════
 
 export function getAllProgress() {
-  return _read(PROGRESS_KEY, {});
+  const data = _read(PROGRESS_KEY, {});
+  const keys = Object.keys(data);
+  const masteredCount = keys.filter(k => data[k].pile === 'mastered').length;
+  console.log('[store] getAllProgress:', keys.length, 'entries,', masteredCount, 'mastered');
+  return data;
 }
 
 export function getCardProgress(cardId, direction) {
@@ -53,6 +57,7 @@ export function updateProgress(cardId, direction, correct) {
   const all = getAllProgress();
   const key = `${cardId}_${direction}`;
   const prog = all[key];
+  console.log('[store] updateProgress', key, 'correct=', correct, 'before=', JSON.stringify(prog));
   if (!prog) return;
 
   const now = new Date().toISOString();
@@ -91,6 +96,7 @@ export function updateProgress(cardId, direction, correct) {
       last_reviewed: now,
     };
   }
+  console.log('[store] updateProgress AFTER', key, '=', JSON.stringify(all[key]));
   _write(PROGRESS_KEY, all);
 }
 
@@ -102,11 +108,11 @@ export function getPileStats(allCards) {
   for (const card of allCards) {
     const k1 = all[`${card.id}_kw_to_syn`];
     const k2 = all[`${card.id}_syn_to_kw`];
-    // Mastered = at least one direction mastered
     const isMastered = (k1 && k1.pile === 'mastered') || (k2 && k2.pile === 'mastered');
     if (isMastered) mastered++;
     else unmastered++;
   }
+  console.log('[store] getPileStats:', { mastered, unmastered, totalCards: allCards.length });
   return { totalCards: allCards.length, mastered, unmastered };
 }
 
@@ -147,12 +153,14 @@ export function getDueCount(allCards) {
 /** Get pile cards (mastered or unmastered) */
 export function getPileCards(allCards, pile) {
   const all = getAllProgress();
-  return allCards.filter(c => {
+  const result = allCards.filter(c => {
     const k1 = all[`${c.id}_kw_to_syn`];
     const k2 = all[`${c.id}_syn_to_kw`];
     const isMastered = (k1 && k1.pile === 'mastered') || (k2 && k2.pile === 'mastered');
     return pile === 'mastered' ? isMastered : !isMastered;
   });
+  console.log('[store] getPileCards', pile, ':', result.length, 'cards');
+  return result;
 }
 
 // ══════════════════════════════════════
