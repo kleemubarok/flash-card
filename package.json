@@ -1,15 +1,9 @@
 {
   "name": "flashcard-toefl",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "private": true,
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "start": "bun run src/index.ts"
-  },
-  "dependencies": {
-    "hono": "^4.13.3"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.9.3"
+    "dev": "bunx serve public -p 3000",
+    "build": "echo 'Static site — no build needed. Deploy public/ to Cloudflare Pages.'"
   }
 }
