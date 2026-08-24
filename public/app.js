@@ -115,15 +115,12 @@ function render(html) {
 // ── Dashboard ──
 function pageDashboard() {
   const stats = Store.getPileStats(ALL);
-  // Count unique cards that have at least one unmastered direction due
+  // Count unique cards that have at least one unmastered direction
   const allProgress = Store.getAllProgress();
-  const now = new Date().toISOString();
   const dueCards = ALL.filter(c => {
     const k1 = allProgress[`${c.id}_kw_to_syn`];
     const k2 = allProgress[`${c.id}_syn_to_kw`];
-    const hasUnmasteredDue = (k1 && k1.pile === 'unmastered' && (!k1.next_review || k1.next_review <= now)) ||
-                             (k2 && k2.pile === 'unmastered' && (!k2.next_review || k2.next_review <= now));
-    return hasUnmasteredDue;
+    return (k1 && k1.pile === 'unmastered') || (k2 && k2.pile === 'unmastered');
   }).length;
   const pct = stats.totalCards > 0 ? Math.round((stats.mastered / stats.totalCards) * 100) : 0;
   const lessonBtns = getLessons().map(l => `<a href="#/study?lesson=${l}" class="lesson-btn">L${l}</a>`).join('');

@@ -119,13 +119,12 @@ export function getPileStats(allCards) {
 /** Get cards due for review (next_review <= now, pile = unmastered) */
 export function getDueCards(allCards, direction, lesson, limit = 20) {
   const all = getAllProgress();
-  const now = new Date().toISOString();
   let pool = allCards.filter(c => {
     if (lesson && c.lesson !== lesson) return false;
     const dirs = direction ? [direction] : ['kw_to_syn', 'syn_to_kw'];
     return dirs.some(d => {
       const p = all[`${c.id}_${d}`];
-      return p && p.pile === 'unmastered' && (!p.next_review || p.next_review <= now);
+      return p && p.pile === 'unmastered';
     });
   });
   // shuffle
@@ -139,12 +138,11 @@ export function getDueCards(allCards, direction, lesson, limit = 20) {
 /** Get due count */
 export function getDueCount(allCards) {
   const all = getAllProgress();
-  const now = new Date().toISOString();
   let count = 0;
   for (const card of allCards) {
     for (const d of ['kw_to_syn', 'syn_to_kw']) {
       const p = all[`${card.id}_${d}`];
-      if (p && p.pile === 'unmastered' && (!p.next_review || p.next_review <= now)) count++;
+      if (p && p.pile === 'unmastered') count++;
     }
   }
   return count;
