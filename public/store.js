@@ -98,12 +98,16 @@ export function updateProgress(cardId, direction, correct) {
 export function getPileStats(allCards) {
   const all = getAllProgress();
   let mastered = 0;
+  let unmastered = 0;
   for (const card of allCards) {
     const k1 = all[`${card.id}_kw_to_syn`];
     const k2 = all[`${card.id}_syn_to_kw`];
-    if (k1 && k1.pile === 'mastered' && k2 && k2.pile === 'mastered') mastered++;
+    // Mastered = at least one direction mastered
+    const isMastered = (k1 && k1.pile === 'mastered') || (k2 && k2.pile === 'mastered');
+    if (isMastered) mastered++;
+    else unmastered++;
   }
-  return { totalCards: allCards.length, mastered, unmastered: allCards.length - mastered };
+  return { totalCards: allCards.length, mastered, unmastered };
 }
 
 /** Get cards due for review (next_review <= now, pile = unmastered) */
@@ -146,8 +150,8 @@ export function getPileCards(allCards, pile) {
   return allCards.filter(c => {
     const k1 = all[`${c.id}_kw_to_syn`];
     const k2 = all[`${c.id}_syn_to_kw`];
-    if (!k1 || !k2) return pile === 'unmastered';
-    return k1.pile === pile && k2.pile === pile;
+    const isMastered = (k1 && k1.pile === 'mastered') || (k2 && k2.pile === 'mastered');
+    return pile === 'mastered' ? isMastered : !isMastered;
   });
 }
 

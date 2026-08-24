@@ -115,14 +115,23 @@ function render(html) {
 // ── Dashboard ──
 function pageDashboard() {
   const stats = Store.getPileStats(ALL);
-  const due = Store.getDueCount(ALL);
+  // Count unique cards that have at least one unmastered direction due
+  const allProgress = Store.getAllProgress();
+  const now = new Date().toISOString();
+  const dueCards = ALL.filter(c => {
+    const k1 = allProgress[`${c.id}_kw_to_syn`];
+    const k2 = allProgress[`${c.id}_syn_to_kw`];
+    const hasUnmasteredDue = (k1 && k1.pile === 'unmastered' && (!k1.next_review || k1.next_review <= now)) ||
+                             (k2 && k2.pile === 'unmastered' && (!k2.next_review || k2.next_review <= now));
+    return hasUnmasteredDue;
+  }).length;
   const pct = stats.totalCards > 0 ? Math.round((stats.mastered / stats.totalCards) * 100) : 0;
   const lessonBtns = getLessons().map(l => `<a href="#/study?lesson=${l}" class="lesson-btn">L${l}</a>`).join('');
   render(nav() + `<h2>Dashboard</h2>
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-num">${stats.totalCards}</div><div class="stat-label">Total Kata</div></div>
       <div class="stat-card"><div class="stat-num">${stats.mastered}</div><div class="stat-label">Dikuasai</div></div>
-      <div class="stat-card"><div class="stat-num" style="color:#f59e0b">${Math.floor(due / 2)}</div><div class="stat-label">Perlu Review</div></div>
+      <div class="stat-card"><div class="stat-num" style="color:#f59e0b">${dueCards}</div><div class="stat-label">Perlu Review</div></div>
       <div class="stat-card"><div class="stat-num">${pct}%</div><div class="stat-label">Progress</div></div>
     </div>
     <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
